@@ -122,6 +122,8 @@ static int inputDataParseInt(char * buff);
 static void setBasicConfigValues();
 static void setNetworkConfigValues();
 
+void setScreenText(uint16_t addr, int value, int maxlen);
+
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
 
@@ -160,6 +162,7 @@ void setup() {
 
   ltimer.set(tid_led, LED_TIMER_INTERVAL); 
   ltimer.set(tid_config, INTRO_TIMER_INTERVAL); 
+  // ltimer.set(tid_op, 2000); // network connect open (maybe)
 
   dgus.set_screen(PAGE_INTRO);
 }
@@ -365,20 +368,7 @@ void loop()
         else if (vp == 0x2030) // UDP PORT (TEXT)
         { 
           config.port = inputDataParseInt(retCmdBuff);
-
-          char buffer[10] = {0,0,0,0,0,0,0,0,0,0};
-          sprintf(buffer, "%d", config.port);
-
-          if (strlen(buffer) < 5) 
-          {
-            for (int i = strlen(buffer); i < 5; i++)
-            {
-              buffer[i] = ' ';
-            }
-            buffer[5] = '\0';
-          }
-
-          dgus.set_text(0x1030, 5, buffer);
+          setScreenText(0x1030, config.port, 5);
         }
         else if (vp == 0x2040) // Update ID
         {
@@ -411,14 +401,17 @@ void loop()
         else if (vp >= 0x2060 && vp < 0x2070)
         {
           config.net_ip[(vp - 0x2060) / 4] = inputDataParseInt(retCmdBuff);
+          setScreenText(vp - 0x1000, config.net_ip[(vp - 0x2060) / 4], 3);
         }
         else if (vp >= 0x2080 && vp < 0x2090)
         {
           config.net_gw[(vp - 0x2080) / 4] = inputDataParseInt(retCmdBuff);
+          setScreenText(vp - 0x1000, config.net_gw[(vp - 0x2080) / 4], 3);
         }
         else if (vp >= 0x2100 && vp < 0x2110)
         {
           config.net_sm[(vp - 0x2100) / 4] = inputDataParseInt(retCmdBuff);
+          setScreenText(vp - 0x1000, config.net_sm[(vp - 0x2100) / 4], 3);
         }
       }
       retCmdLen = 0;
@@ -522,7 +515,11 @@ void loop()
         Serial1.println("Starting Ethernet connection using DHCP...");
         if (Ethernet.begin(config.mac, 15000) == 0)   // 15 seconds timeout
         {
-          // If DHCP configuration fails, print an error message:
+
+          // hiddenKeyTouchCnt = 0;
+          // dgus.set_screen(PAGE_WARN);
+
+          // If DHCP configuration fails, print an error message::
           Serial1.println("Failed to configure Ethernet using DHCP");
 
           // Try to configure Ethernet with the static IP address:
@@ -1300,4 +1297,22 @@ static void setNetworkConfigValues()
     dgus.set_text(0x1100 + (4 * i), 3, buffer);
   }
 
+}
+
+// convert int value to string and display 
+void setScreenText(uint16_t addr, int value, int maxlen)
+{
+  char buffer[8] = {0,0,0,0,0,0,0,0};
+  sprintf(buffer, "%d", value);
+
+  if (strlen(buffer) < maxlen) 
+  {
+    for (int i = strlen(buffer); i < maxlen; i++)
+    {
+      buffer[i] = ' ';
+    }
+    buffer[maxlen] = '\0';
+  }
+
+  dgus.set_text(addr, maxlen, buffer);
 }
