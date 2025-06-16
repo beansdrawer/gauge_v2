@@ -13,10 +13,10 @@
 
 #define LED_TIMER_INTERVAL 500
 #define INTRO_TIMER_INTERVAL 5000
-#define CONFIG_MAIN_TIMER_INTERVAL 30000
+#define CONFIG_MAIN_TIMER_INTERVAL 8000
 
 #define PAGE_INTRO 0
-#define PAGE_WARN 1
+#define PAGE_NETWORK_CHECK 1
 #define PAGE_CONFIG_MAIN 2
 #define PAGE_CONFIG_BASIC 3
 #define PAGE_CONFIG_NETWORK_DHCP 4
@@ -24,6 +24,7 @@
 #define PAGE_RPM 7
 #define PAGE_ROT 8
 #define PAGE_RA 9
+#define PAGE_WARN 10
 
 #define CONFIG_MARK   "FHTG"
 #define RANGE_RA    56        // RUDDER_ANGLE : -RANGE_RA ~ RANGE_RA
@@ -86,8 +87,10 @@ static int tid_led;
 static int tid_op;
 static int tid_update;
 static int tid_config;
-static int tid_configMain;
+static int tid_configMain_waiting;
+static int tid_intro_waiting;
 
+static int currentPage = 0;
 static bool isInConfigPage = false;
 static int hiddenKeyTouchCnt = 0;
 
@@ -131,8 +134,10 @@ void setup() {
   tid_led = ltimer.alloc();
   tid_op = ltimer.alloc();
   tid_update = ltimer.alloc();
+
+  tid_intro_waiting = ltimer.alloc(); // 3s
   tid_config = ltimer.alloc();
-  tid_configMain = ltimer.alloc();
+  tid_configMain_waiting = ltimer.alloc();
   
   console.begin(115200);
   Serial1.println("GAUGE 2.0 ForHumanTech developing Started...");
@@ -161,8 +166,8 @@ void setup() {
   delay(100);
 
   ltimer.set(tid_led, LED_TIMER_INTERVAL); 
-  ltimer.set(tid_config, INTRO_TIMER_INTERVAL); 
-  // ltimer.set(tid_op, 2000); // network connect open (maybe)
+  ltimer.set(tid_intro_waiting, INTRO_TIMER_INTERVAL);
+  // ltimer.set(tid_op, 500); // network connect open timer (maybe)
 
   dgus.set_screen(PAGE_INTRO);
 }
@@ -170,48 +175,7 @@ void setup() {
 
 void loop() 
 {
-  if(ltimer.isfired(tid_config))
-  { 
-    if(!isInConfigPage)
-    {
-      isInConfigPage = true;
-      // dgus.set_screen(PAGE_RPM);
-      switch (config.type) 
-      {
-        case 1 :
-          dgus.set_screen(PAGE_RPM);
-          break;
-        case 2 :
-          dgus.set_screen(PAGE_ROT);
-          break;
-        case 3 :
-          dgus.set_screen(PAGE_RA);
-          break;
-      }
-    }
-  }
-
-  if(ltimer.isfired(tid_configMain))
-  {  
-    if(!isInConfigPage)
-    {
-      isInConfigPage = true;
-      // dgus.set_screen(PAGE_RPM);
-      switch (config.type) 
-      {
-        case 1 :
-          dgus.set_screen(PAGE_RPM);
-          break;
-        case 2 :
-          dgus.set_screen(PAGE_ROT);
-          break;
-        case 3 :
-          dgus.set_screen(PAGE_RA);
-          break;
-      }
-    }
-  }
-  // put your main code here, to run repeatedly:
+  // blink LED
   if (ltimer.isfired(tid_led))
   {
     static char b = 0;
@@ -222,6 +186,43 @@ void loop()
 
     b ^= 1;
   } 
+
+  if(ltimer.isfired(tid_intro_waiting))
+  { 
+      ltimer.clear(tid_intro_waiting);
+      dgus.set_screen(PAGE_NETWORK_CHECK);
+
+      Serial.println("ethernet begin!");
+      if (Ethernet.begin(config.mac, 15000) == 0)   // 15 seconds timeout
+      {   
+        dgus.set_screen(PAGE_WARN);
+      } 
+      else 
+      {
+        switch (config.type) 
+        {
+          case 1 :
+            dgus.set_screen(PAGE_RPM);
+            break;
+          case 2 :
+            dgus.set_screen(PAGE_ROT);
+            break;
+          case 3 :
+            dgus.set_screen(PAGE_RA);
+            break;
+        }
+      }
+      Serial.println("end of ethernet begin!");
+  }
+
+  if(ltimer.isfired(tid_configMain_waiting))
+  {  
+    ltimer.clear(tid_configMain_waiting);
+    ltimer.set(tid_intro_waiting, INTRO_TIMER_INTERVAL);
+
+    hiddenKeyTouchCnt = 0;
+    dgus.set_screen(PAGE_INTRO);
+  }
 
 
   while (Serial2.available())
@@ -266,15 +267,15 @@ void loop()
           hiddenKeyTouchCnt++;
           if(hiddenKeyTouchCnt == 2)
           {
-            ltimer.clear(tid_config);
+            ltimer.clear(tid_intro_waiting);
             
-            ltimer.set(tid_configMain, CONFIG_MAIN_TIMER_INTERVAL); 
+            ltimer.set(tid_configMain_waiting, CONFIG_MAIN_TIMER_INTERVAL); 
             dgus.set_screen(PAGE_CONFIG_MAIN);
           }
         }
         else if (vp == 0x0030) // Basic or Network
         {
-          ltimer.clear(tid_configMain);
+          ltimer.clear(tid_configMain_waiting);
           if(keyVal == 0) 
           { 
             dgus.set_screen(PAGE_CONFIG_BASIC); 
@@ -284,6 +285,8 @@ void loop()
           {
             if (config.net_mode == 0) dgus.set_screen(PAGE_CONFIG_NETWORK_DHCP);
             else dgus.set_screen(PAGE_CONFIG_NETWORK_MANUAL);
+
+            // ltimer.set(tid_op, 20000); // when go to config network page, network open timer start 
 
             setNetworkConfigValues();
           }
@@ -322,8 +325,8 @@ void loop()
           {
             // Cancel & Back
             config = configBackUp;
-            tid_configMain = ltimer.alloc();
-            ltimer.set(tid_configMain, CONFIG_MAIN_TIMER_INTERVAL); 
+            tid_configMain_waiting = ltimer.alloc();
+            ltimer.set(tid_configMain_waiting, CONFIG_MAIN_TIMER_INTERVAL); 
             dgus.set_screen(PAGE_CONFIG_MAIN);
           }
           else if (keyVal == 1)
@@ -331,8 +334,8 @@ void loop()
             // Save & Back
             configBackUp = config;
             saveConfig(&config);
-            tid_configMain = ltimer.alloc();
-            ltimer.set(tid_configMain, CONFIG_MAIN_TIMER_INTERVAL); 
+            tid_configMain_waiting = ltimer.alloc();
+            ltimer.set(tid_configMain_waiting, CONFIG_MAIN_TIMER_INTERVAL); 
             dgus.set_screen(PAGE_CONFIG_MAIN);
           }
         }
